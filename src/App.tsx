@@ -69,7 +69,7 @@ interface MoviesResponse {
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const API = {
   usuarios: "http://localhost:8000",
-  peliculas: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:3000",
+  peliculas: "http://localhost:3000/api",
   foro: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8080", // DNS del balanceador
 } as const;
 
@@ -376,14 +376,15 @@ const UsuariosTab: FC<{ auth: Auth }> = ({ auth }) => {
   );
 };
 
-// ─── PELÍCULAS TAB ────────────────────────────────────────────────────────────
-const PeliculasTab: FC = () => {
-  const [movies, setMovies]   = useState<Movie[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [modal, setModal]     = useState<"create" | null>(null);
-  const [detail, setDetail]   = useState<MovieDetail | null>(null);
-  const [search, setSearch]   = useState("");
-  const [form, setForm]       = useState({ title: "", year: "", duration: "", synopsis: "", poster_url: "", genres: "" });
+
+const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
+  const [movies, setMovies]       = useState<Movie[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [detail, setDetail]       = useState<MovieDetail | null>(null);
+  const [search, setSearch]       = useState("");
+  const [usuario, setUsuario]     = useState<Usuario | null>(null);
+  const [reviewForm, setReviewForm] = useState({ author: "", rating: "", comment: "" });
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -394,29 +395,45 @@ const PeliculasTab: FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const createMovie = async () => {
-    const body = {
-      title: form.title,
-      year: parseInt(form.year),
-      ...(form.duration && { duration: parseInt(form.duration) }),
-      ...(form.synopsis && { synopsis: form.synopsis }),
-      ...(form.poster_url && { poster_url: form.poster_url }),
-      genres: form.genres ? form.genres.split(",").map(g => g.trim()) : [],
+  useEffect(() => {
+    const loadUser = async () => {
+      const res = await fetchJSON<Usuario>(`${API.usuarios}/auth/me`, {
+        headers: authHeader(auth.email, auth.password),
+      });
+      if (res) setUsuario(res);
     };
-    await fetchJSON(`${API.peliculas}/movies`, { method: "POST", body: JSON.stringify(body) });
-    setModal(null);
-    setForm({ title: "", year: "", duration: "", synopsis: "", poster_url: "", genres: "" });
-    load();
-  };
-
-  const deleteMovie = async (id: number) => {
-    await fetchJSON(`${API.peliculas}/movies/${id}`, { method: "DELETE" });
-    load();
-  };
+    loadUser();
+  }, [auth]);
 
   const openDetail = async (id: number) => {
     const res = await fetchJSON<MovieDetail>(`${API.peliculas}/movies/${id}`);
     if (res) setDetail(res);
+  };
+
+  const marcarVista = async (e: React.MouseEvent, movieId: number) => {
+    e.stopPropagation();
+    if (!usuario) return;
+    await fetchJSON(`${API.usuarios}/interno/usuarios/${usuario.id}/vista/${movieId}`, {
+      method: "POST",
+      headers: authHeader(auth.email, auth.password),
+    });
+  };
+
+  const addReview = async () => {
+    if (!detail || !reviewForm.author || !reviewForm.rating) return;
+    setReviewLoading(true);
+    await fetchJSON(`${API.peliculas}/movies/${detail.id}/reviews`, {
+      method: "POST",
+      body: JSON.stringify({
+        author: reviewForm.author,
+        rating: parseFloat(reviewForm.rating),
+        comment: reviewForm.comment,
+      }),
+    });
+    const updated = await fetchJSON<MovieDetail>(`${API.peliculas}/movies/${detail.id}`);
+    if (updated) setDetail(updated);
+    setReviewForm({ author: "", rating: "", comment: "" });
+    setReviewLoading(false);
   };
 
   const filtered = movies.filter(m =>
@@ -431,14 +448,13 @@ const PeliculasTab: FC = () => {
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar películas..."
             className="w-full bg-slate-700/50 border border-slate-600/50 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/70" />
         </div>
-        <Btn onClick={() => setModal("create")} variant="primary" size="sm"><Icon path={Icons.plus} size={14} />Nueva</Btn>
         <Btn onClick={load} variant="ghost" size="sm"><Icon path={Icons.refresh} size={14} /></Btn>
       </div>
 
       {loading ? <Spinner /> : filtered.length === 0 ? <EmptyState message="No hay películas" /> : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map(m => (
-            <Card key={m.id} className="p-4 hover:border-slate-600 transition-colors">
+            <Card key={m.id} className="p-4 hover:border-slate-500 transition-colors cursor-pointer" onClick={() => openDetail(m.id)}>
               {m.poster_url && (
                 <img src={m.poster_url} alt={m.title}
                   className="w-full h-40 object-cover rounded-lg mb-3"
@@ -449,10 +465,9 @@ const PeliculasTab: FC = () => {
                   <p className="text-white font-semibold truncate">{m.title}</p>
                   <p className="text-slate-400 text-xs mt-0.5">{m.year}{m.duration ? ` · ${m.duration} min` : ""}</p>
                 </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <Btn size="sm" variant="ghost" onClick={() => openDetail(m.id)}><Icon path={Icons.eye} size={12} /></Btn>
-                  <Btn size="sm" variant="danger" onClick={() => deleteMovie(m.id)}><Icon path={Icons.trash} size={12} /></Btn>
-                </div>
+                <Btn size="sm" variant="ghost" onClick={(e) => marcarVista(e, m.id)}>
+                  <Icon path={Icons.star} size={12} /> Vista
+                </Btn>
               </div>
               {m.synopsis && <p className="text-slate-400 text-xs mt-2 line-clamp-2">{m.synopsis}</p>}
             </Card>
@@ -460,70 +475,110 @@ const PeliculasTab: FC = () => {
         </div>
       )}
 
-      {modal === "create" && (
-        <Modal title="Nueva Película" onClose={() => setModal(null)}>
-          <div className="space-y-3">
-            <Input label="Título *" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
-            <div className="grid grid-cols-2 gap-3">
-              <Input label="Año *" type="number" value={form.year} onChange={e => setForm(f => ({ ...f, year: e.target.value }))} />
-              <Input label="Duración (min)" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: e.target.value }))} />
-            </div>
-            <Input label="Géneros (separados por coma)" placeholder="Acción, Drama" value={form.genres} onChange={e => setForm(f => ({ ...f, genres: e.target.value }))} />
-            <Input label="URL del Póster" value={form.poster_url} onChange={e => setForm(f => ({ ...f, poster_url: e.target.value }))} />
-            <div>
-              <label className="block text-xs text-slate-400 mb-1 font-medium">Sinopsis</label>
-              <textarea value={form.synopsis} onChange={e => setForm(f => ({ ...f, synopsis: e.target.value }))}
-                rows={3} className="w-full bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/70 resize-none" />
-            </div>
-            <div className="flex gap-2 justify-end pt-1">
-              <Btn variant="ghost" onClick={() => setModal(null)}>Cancelar</Btn>
-              <Btn variant="primary" onClick={createMovie} disabled={!form.title || !form.year}>Crear</Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
-
       {detail && (
-        <Modal title={detail.title} onClose={() => setDetail(null)}>
-          <div className="space-y-3 text-sm">
-            <div className="flex flex-wrap gap-2">
-              {detail.genres?.map(g => <Badge key={g.id} color="blue">{g.name}</Badge>)}
+        <div className="fixed inset-0 z-50 bg-slate-900/95 backdrop-blur-sm overflow-y-auto p-6">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-white text-2xl font-bold">{detail.title}</h2>
+              <div className="flex items-center gap-3">
+                <Btn variant="ghost" size="sm" onClick={(e) => marcarVista(e, detail.id)}>
+                  <Icon path={Icons.star} size={12} /> Marcar como vista
+                </Btn>
+                <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+              </div>
             </div>
-            <p className="text-slate-400">{detail.synopsis || "Sin sinopsis"}</p>
-            {(detail.directors?.length ?? 0) > 0 && (
-              <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Directores</p>
-                <p className="text-slate-300">{detail.directors!.map(d => d.name).join(", ")}</p>
+            <div className="space-y-6">
+              <div className="flex gap-4 flex-wrap">
+                <Badge color="slate">{detail.year}</Badge>
+                {detail.duration && <Badge color="slate">{detail.duration} min</Badge>}
+                {detail.genres?.map(g => <Badge key={g.id} color="blue">{g.name}</Badge>)}
               </div>
-            )}
-            {(detail.actors?.length ?? 0) > 0 && (
-              <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Actores</p>
-                <div className="flex flex-wrap gap-1">
-                  {detail.actors!.slice(0, 8).map(a => (
-                    <span key={a.id} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{a.name}</span>
-                  ))}
-                </div>
+              {detail.synopsis && (
+                <Card className="p-5">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Sinopsis</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">{detail.synopsis}</p>
+                </Card>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(detail.directors?.length ?? 0) > 0 && (
+                  <Card className="p-5">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">Directores</p>
+                    <div className="space-y-1">
+                      {detail.directors!.map(d => (
+                        <p key={d.id} className="text-slate-300 text-sm">{d.name}</p>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+                {(detail.actors?.length ?? 0) > 0 && (
+                  <Card className="p-5">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">Actores</p>
+                    <div className="flex flex-wrap gap-1">
+                      {detail.actors!.map(a => (
+                        <span key={a.id} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{a.name}</span>
+                      ))}
+                    </div>
+                  </Card>
+                )}
               </div>
-            )}
-            {(detail.reviews?.length ?? 0) > 0 && (
-              <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Reseñas ({detail.reviews!.length})</p>
-                <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {detail.reviews!.map(r => (
-                    <div key={r.id} className="bg-slate-700/40 rounded-lg p-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-white text-xs font-medium">{r.author}</span>
-                        <span className="text-yellow-400 text-xs">★ {r.rating}/10</span>
+
+              <Card className="p-5">
+                <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">
+                  Reseñas ({detail.reviews?.length ?? 0})
+                </p>
+                <div className="space-y-3 mb-4">
+                  {(detail.reviews?.length ?? 0) === 0 && (
+                    <p className="text-slate-500 text-xs">Sin reseñas aún</p>
+                  )}
+                  {detail.reviews?.map(r => (
+                    <div key={r.id} className="border-b border-slate-700/40 last:border-0 pb-3 last:pb-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-white text-sm font-medium">{r.author}</span>
+                        <span className="text-yellow-400 text-sm">★ {r.rating}/10</span>
                       </div>
-                      {r.comment && <p className="text-slate-400 text-xs mt-1">{r.comment}</p>}
+                      {r.comment && <p className="text-slate-400 text-sm">{r.comment}</p>}
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+                <div className="border-t border-slate-700/40 pt-4 space-y-2">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Añadir reseña</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      placeholder="Tu nombre"
+                      value={reviewForm.author}
+                      onChange={e => setReviewForm(f => ({ ...f, author: e.target.value }))}
+                      className="bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/70"
+                    />
+                    <input
+                      placeholder="Calificación (0-10)"
+                      type="number"
+                      min="0"
+                      max="10"
+                      step="0.1"
+                      value={reviewForm.rating}
+                      onChange={e => setReviewForm(f => ({ ...f, rating: e.target.value }))}
+                      className="bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/70"
+                    />
+                  </div>
+                  <input
+                    placeholder="Comentario (opcional)"
+                    value={reviewForm.comment}
+                    onChange={e => setReviewForm(f => ({ ...f, comment: e.target.value }))}
+                    className="w-full bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/70"
+                  />
+                  <Btn
+                    variant="primary"
+                    size="sm"
+                    onClick={addReview}
+                    disabled={!reviewForm.author || !reviewForm.rating || reviewLoading}
+                  >
+                    {reviewLoading ? "Enviando..." : "Publicar reseña"}
+                  </Btn>
+                </div>
+              </Card>
+            </div>
           </div>
-        </Modal>
+        </div>
       )}
     </div>
   );
@@ -949,7 +1004,7 @@ export default function App() {
         </div>
         {tab === "overview"  && <OverviewTab auth={auth} />}
         {tab === "usuarios"  && <UsuariosTab auth={auth} />}
-        {tab === "peliculas" && <PeliculasTab />}
+        {tab === "peliculas" && <PeliculasTab auth={auth} />}
         {tab === "foro"      && <ForoTab />}
         {tab === "perfil"    && <PerfilTab auth={auth} />}
       </div>
