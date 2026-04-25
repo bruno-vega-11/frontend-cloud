@@ -68,9 +68,9 @@ interface MoviesResponse {
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const API = {
-  usuarios: "http://mi-alb-1234567890.us-east-1.elb.amazonaws.com:8000",
-  peliculas: "http://mi-alb-1234567890.us-east-1.elb.amazonaws.com:3000",
-  foro: "http://mi-alb-1234567890.us-east-1.elb.amazonaws.com:8080", // DNS del balanceador
+  usuarios: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8000",
+  peliculas: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:3000",
+  foro: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8080", // DNS del balanceador
 } as const;
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
