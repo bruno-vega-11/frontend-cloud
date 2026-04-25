@@ -68,9 +68,9 @@ interface MoviesResponse {
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const API = {
-  usuarios: "http://localhost:8000",
-  peliculas: "http://localhost:3000",
-  foro: "http://localhost:8080",
+  usuarios: "http://mi-alb-1234567890.us-east-1.elb.amazonaws.com:8000",
+  peliculas: "http://mi-alb-1234567890.us-east-1.elb.amazonaws.com:3000",
+  foro: "http://mi-alb-1234567890.us-east-1.elb.amazonaws.com:8080", // DNS del balanceador
 } as const;
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
