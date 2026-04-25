@@ -68,7 +68,7 @@ interface MoviesResponse {
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const API = {
-  usuarios: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8000",
+  usuarios: "http://localhost:8000",
   peliculas: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:3000",
   foro: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8080", // DNS del balanceador
 } as const;
@@ -722,6 +722,128 @@ const ForoTab: FC = () => {
   );
 };
 
+const PerfilTab: FC<{ auth: Auth }> = ({ auth }) => {
+  const [usuario, setUsuario] = useState<Usuario | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm]       = useState({ nombre: "", pais: "" });
+  const [success, setSuccess] = useState(false);
+  const [peliculas, setPeliculas] = useState<any[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const res = await fetchJSON<Usuario>(`${API.usuarios}/auth/me`, {
+        headers: authHeader(auth.email, auth.password),
+      });
+      if (res) {
+        setUsuario(res);
+        setForm({ nombre: res.nombre, pais: res.pais });
+        const vistas = await fetchJSON<any[]>(`${API.usuarios}/usuarios/${res.id}/peliculas_vistas`, {
+          headers: authHeader(auth.email, auth.password),
+        });
+        setPeliculas(vistas || []);
+      }
+      setLoading(false);
+    };
+    load();
+  }, [auth]);
+
+  const update = async () => {
+    if (!usuario) return;
+    await fetchJSON(`${API.usuarios}/usuarios/${usuario.id}`, {
+      method: "PUT",
+      headers: authHeader(auth.email, auth.password),
+      body: JSON.stringify({ nombre: form.nombre, pais: form.pais }),
+    });
+    setUsuario(u => u ? { ...u, ...form } : u);
+    setEditing(false);
+    setSuccess(true);
+    setTimeout(() => setSuccess(false), 3000);
+  };
+
+  if (loading) return <Spinner />;
+  if (!usuario) return <EmptyState message="No se pudo cargar el perfil" />;
+
+  return (
+    <div className="space-y-6">
+      {/* Topbar */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Mi Perfil</h2>
+          <p className="text-slate-400 text-sm mt-0.5">Conectado como <span className="text-blue-400">{auth.email}</span></p>
+        </div>
+        <Btn variant="ghost" size="sm" onClick={() => setEditing(true)}>
+          Editar perfil
+        </Btn>
+      </div>
+
+      {/* Info card */}
+      <Card className="p-6">
+        <div className="flex items-center gap-4 mb-6 pb-6 border-b border-slate-700/50">
+          <div className="w-14 h-14 rounded-full bg-blue-600 flex items-center justify-center text-white text-2xl font-bold shrink-0">
+            {usuario.nombre?.[0]?.toUpperCase()}
+          </div>
+          <div>
+            <p className="text-white font-semibold text-lg">{usuario.nombre}</p>
+            <p className="text-slate-400 text-sm">{usuario.email}</p>
+            <Badge color={usuario.rol === "admin" ? "purple" : "slate"}>{usuario.rol}</Badge>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-0">
+          {[
+            { label: "Nombre",    value: usuario.nombre },
+            { label: "País",      value: usuario.pais },
+            { label: "Email",     value: usuario.email },
+            { label: "Registro",  value: usuario.fecha_registro ? new Date(usuario.fecha_registro).toLocaleDateString("es") : "—" },
+          ].map((row, i) => (
+            <div key={row.label} className={`py-3 ${i % 2 === 0 ? "pr-6 border-r border-slate-700/40" : "pl-6"} ${i < 2 ? "border-b border-slate-700/40" : ""}`}>
+              <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">{row.label}</p>
+              <p className="text-white text-sm">{row.value}</p>
+            </div>
+          ))}
+        </div>
+        {success && <p className="text-emerald-400 text-xs mt-4">✓ Perfil actualizado correctamente</p>}
+      </Card>
+
+      {/* Películas vistas */}
+      <Card className="p-6">
+        <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-4">Películas vistas ({peliculas.length})</p>
+        {peliculas.length === 0 ? (
+          <EmptyState message="No hay películas marcadas como vistas" />
+        ) : (
+          <div className="space-y-1">
+            {peliculas.map((p, i) => (
+              <div key={i} className="flex items-center gap-3 py-2 border-b border-slate-700/30 last:border-0">
+                <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center text-slate-400 shrink-0">
+                  <Icon path={Icons.film} size={14} />
+                </div>
+                <div>
+                  <p className="text-white text-sm">Película #{p.pelicula_id}</p>
+                  {p.fecha_vista && <p className="text-slate-400 text-xs">{new Date(p.fecha_vista).toLocaleDateString("es")}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Modal editar */}
+      {editing && (
+        <Modal title="Editar perfil" onClose={() => setEditing(false)}>
+          <div className="space-y-4">
+            <Input label="Nombre" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
+            <Input label="País" value={form.pais} onChange={e => setForm(f => ({ ...f, pais: e.target.value }))} />
+            <div className="flex gap-2 justify-end pt-1">
+              <Btn variant="ghost" onClick={() => setEditing(false)}>Cancelar</Btn>
+              <Btn variant="primary" onClick={update}>Guardar</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 // ─── OVERVIEW ─────────────────────────────────────────────────────────────────
 const OverviewTab: FC<{ auth: Auth }> = ({ auth }) => {
   const [stats, setStats] = useState<{ usuarios: number | null; peliculas: number | null; threads: number | null }>({
@@ -770,7 +892,7 @@ const OverviewTab: FC<{ auth: Auth }> = ({ auth }) => {
 };
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
-type TabId = "overview" | "usuarios" | "peliculas" | "foro";
+type TabId = "overview" | "usuarios" | "peliculas" | "foro" | "perfil";
 interface Tab { id: TabId; label: string; icon: string }
 
 const TABS: Tab[] = [
@@ -778,6 +900,7 @@ const TABS: Tab[] = [
   { id: "usuarios",  label: "Usuarios",  icon: Icons.users },
   { id: "peliculas", label: "Películas", icon: Icons.film },
   { id: "foro",      label: "Foro",      icon: Icons.forum },
+  {id: "perfil",    label: "Mi Perfil", icon: Icons.users }, 
 ];
 
 export default function App() {
@@ -828,6 +951,7 @@ export default function App() {
         {tab === "usuarios"  && <UsuariosTab auth={auth} />}
         {tab === "peliculas" && <PeliculasTab />}
         {tab === "foro"      && <ForoTab />}
+        {tab === "perfil"    && <PerfilTab auth={auth} />}
       </div>
     </div>
   );
