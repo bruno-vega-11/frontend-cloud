@@ -66,12 +66,13 @@ interface MoviesResponse {
   limit: number;
 }
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
-const API = {
-  usuarios: "http://localhost:8000",
-  peliculas: "http://localhost:3000",
-  foro: "http://localhost:8080",
-} as const;
+interface UserStats {
+  top_genres?: { genre: string; count: number }[];
+  total_movies?: number;
+}
+
+// ─── CONFIG — todo pasa por el MS4 ───────────────────────────────────────────
+const MS4 = "http://localhost:8004";
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 async function fetchJSON<T>(url: string, opts: RequestInit = {}): Promise<T | null> {
@@ -111,6 +112,7 @@ const Icons: Record<string, string> = {
   refresh: "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15",
   logout:  "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   thread:  "M17 8h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2v4l-4-4H9a1.994 1.994 0 0 1-1.414-.586m0 0L11 14h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2v4l.586-.586z",
+  chart:   "M18 20V10M12 20V4M6 20v-6",
 };
 
 // ─── UI PRIMITIVES ────────────────────────────────────────────────────────────
@@ -155,11 +157,11 @@ const StatCard: FC<{ icon: string; label: string; value: number | null; color: "
 
 type BtnVariant = "primary" | "danger" | "ghost";
 type BtnSize = "sm" | "md";
-const Btn: FC<{ onClick?: (e:React.MouseEvent<HTMLButtonElement>) => void; children: ReactNode; variant?: BtnVariant; size?: BtnSize; disabled?: boolean }> = ({
+const Btn: FC<{ onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void; children: ReactNode; variant?: BtnVariant; size?: BtnSize; disabled?: boolean }> = ({
   onClick, children, variant = "primary", size = "md", disabled = false,
 }) => {
   const base = "inline-flex items-center gap-2 rounded-lg font-medium transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed";
-  const sizes: Record<BtnSize, string>    = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm" };
+  const sizes: Record<BtnSize, string>       = { sm: "px-3 py-1.5 text-xs", md: "px-4 py-2 text-sm" };
   const variants: Record<BtnVariant, string> = {
     primary: "bg-blue-600 hover:bg-blue-500 text-white",
     danger:  "bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-600/30",
@@ -208,21 +210,22 @@ const Spinner: FC = () => (
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 const LoginView: FC<{ onLogin: (auth: Auth) => void }> = ({ onLogin }) => {
-  const [form, setForm]     = useState({ email: "", password: "", nombre: "", pais: "" });
-  const [mode, setMode]     = useState<"login" | "register">("login");
-  const [error, setError]   = useState("");
+  const [form, setForm]       = useState({ email: "", password: "", nombre: "", pais: "" });
+  const [mode, setMode]       = useState<"login" | "register">("login");
+  const [error, setError]     = useState("");
   const [loading, setLoading] = useState(false);
 
   const handle = async () => {
     setError(""); setLoading(true);
     if (mode === "login") {
-      const res = await fetchJSON<{ mensaje: string }>(`${API.usuarios}/auth/login`, {
+      // MS4 maneja el login orquestando al MS1
+      const res = await fetchJSON<{ mensaje: string }>(`${MS4}/auth/login`, {
         headers: authHeader(form.email, form.password),
       });
       if (res) onLogin({ email: form.email, password: form.password, nombre: res.mensaje });
       else setError("Credenciales incorrectas");
     } else {
-      const res = await fetchJSON<Usuario>(`${API.usuarios}/auth/registro`, {
+      const res = await fetchJSON<Usuario>(`${MS4}/auth/registro`, {
         method: "POST",
         body: JSON.stringify({ nombre: form.nombre, email: form.email, password: form.password, pais: form.pais }),
       });
@@ -269,15 +272,17 @@ const LoginView: FC<{ onLogin: (auth: Auth) => void }> = ({ onLogin }) => {
 
 // ─── USUARIOS TAB ─────────────────────────────────────────────────────────────
 const UsuariosTab: FC<{ auth: Auth }> = ({ auth }) => {
-  const [users, setUsers]     = useState<Usuario[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [modal, setModal]     = useState<{ type: string; data: Usuario } | null>(null);
-  const [form, setForm]       = useState({ nombre: "", pais: "" });
-  const [search, setSearch]   = useState("");
+  const [users, setUsers]       = useState<Usuario[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [modal, setModal]       = useState<{ type: string; data: Usuario } | null>(null);
+  const [detailModal, setDetailModal] = useState<{ user: Usuario; stats: UserStats | null; history: Movie[] } | null>(null);
+  const [form, setForm]         = useState({ nombre: "", pais: "" });
+  const [search, setSearch]     = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetchJSON<Usuario[]>(`${API.usuarios}/usuarios`, {
+    // MS4 → GET /usuarios
+    const res = await fetchJSON<Usuario[]>(`${MS4}/usuarios`, {
       headers: authHeader(auth.email, auth.password),
     });
     setUsers(res || []);
@@ -287,7 +292,7 @@ const UsuariosTab: FC<{ auth: Auth }> = ({ auth }) => {
   useEffect(() => { load(); }, [load]);
 
   const deleteUser = async (id: number) => {
-    await fetchJSON(`${API.usuarios}/usuarios/${id}`, {
+    await fetchJSON(`${MS4}/usuarios/${id}`, {
       method: "DELETE",
       headers: authHeader(auth.email, auth.password),
     });
@@ -296,12 +301,21 @@ const UsuariosTab: FC<{ auth: Auth }> = ({ auth }) => {
 
   const updateUser = async () => {
     if (!modal) return;
-    await fetchJSON(`${API.usuarios}/usuarios/${modal.data.id}`, {
+    await fetchJSON(`${MS4}/usuarios/${modal.data.id}`, {
       method: "PUT",
       headers: authHeader(auth.email, auth.password),
       body: JSON.stringify({ nombre: form.nombre, pais: form.pais }),
     });
     setModal(null); load();
+  };
+
+  const openDetail = async (user: Usuario) => {
+    // MS4 → GET /api/v1/users/{id}/stats  y  /api/v1/users/{id}/history
+    const [stats, history] = await Promise.all([
+      fetchJSON<UserStats>(`${MS4}/api/v1/users/${user.id}/stats`),
+      fetchJSON<Movie[]>(`${MS4}/api/v1/users/${user.id}/history`),
+    ]);
+    setDetailModal({ user, stats: stats || null, history: history || [] });
   };
 
   const filtered = users.filter(u =>
@@ -345,6 +359,9 @@ const UsuariosTab: FC<{ auth: Auth }> = ({ auth }) => {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
+                      <Btn size="sm" variant="ghost" onClick={() => openDetail(u)}>
+                        <Icon path={Icons.chart} size={12} />Stats
+                      </Btn>
                       <Btn size="sm" variant="ghost" onClick={() => { setForm({ nombre: u.nombre, pais: u.pais }); setModal({ type: "edit", data: u }); }}>
                         Editar
                       </Btn>
@@ -372,6 +389,42 @@ const UsuariosTab: FC<{ auth: Auth }> = ({ auth }) => {
           </div>
         </Modal>
       )}
+
+      {detailModal && (
+        <Modal title={`Stats — ${detailModal.user.nombre}`} onClose={() => setDetailModal(null)}>
+          <div className="space-y-4 text-sm">
+            {detailModal.stats?.top_genres && detailModal.stats.top_genres.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Géneros favoritos</p>
+                <div className="space-y-1">
+                  {detailModal.stats.top_genres.map(g => (
+                    <div key={g.genre} className="flex items-center justify-between">
+                      <span className="text-slate-300">{g.genre}</span>
+                      <Badge color="blue">{g.count}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {detailModal.history.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-2">Historial ({detailModal.history.length})</p>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {detailModal.history.map(m => (
+                    <div key={m.id} className="flex items-center justify-between py-1 border-b border-slate-700/30">
+                      <span className="text-slate-300 text-xs">{m.title}</span>
+                      <span className="text-slate-500 text-xs">{m.year}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!detailModal.stats?.top_genres?.length && !detailModal.history.length && (
+              <p className="text-slate-500 text-xs text-center py-4">Sin actividad registrada</p>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
@@ -384,11 +437,17 @@ const PeliculasTab: FC = () => {
   const [detail, setDetail]   = useState<MovieDetail | null>(null);
   const [search, setSearch]   = useState("");
   const [form, setForm]       = useState({ title: "", year: "", duration: "", synopsis: "", poster_url: "", genres: "" });
+  const [movieStats, setMovieStats] = useState<{ total?: number } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetchJSON<MoviesResponse>(`${API.peliculas}/movies?limit=50`);
+    // MS4 → GET /movies
+    const [res, stats] = await Promise.all([
+      fetchJSON<MoviesResponse>(`${MS4}/movies?limit=50`),
+      fetchJSON<{ total?: number }>(`${MS4}/api/v1/movies/stats`),
+    ]);
     setMovies(res?.data || []);
+    setMovieStats(stats);
     setLoading(false);
   }, []);
 
@@ -398,24 +457,25 @@ const PeliculasTab: FC = () => {
     const body = {
       title: form.title,
       year: parseInt(form.year),
-      ...(form.duration && { duration: parseInt(form.duration) }),
-      ...(form.synopsis && { synopsis: form.synopsis }),
+      ...(form.duration  && { duration: parseInt(form.duration) }),
+      ...(form.synopsis  && { synopsis: form.synopsis }),
       ...(form.poster_url && { poster_url: form.poster_url }),
       genres: form.genres ? form.genres.split(",").map(g => g.trim()) : [],
     };
-    await fetchJSON(`${API.peliculas}/movies`, { method: "POST", body: JSON.stringify(body) });
+    await fetchJSON(`${MS4}/movies`, { method: "POST", body: JSON.stringify(body) });
     setModal(null);
     setForm({ title: "", year: "", duration: "", synopsis: "", poster_url: "", genres: "" });
     load();
   };
 
   const deleteMovie = async (id: number) => {
-    await fetchJSON(`${API.peliculas}/movies/${id}`, { method: "DELETE" });
+    await fetchJSON(`${MS4}/movies/${id}`, { method: "DELETE" });
     load();
   };
 
   const openDetail = async (id: number) => {
-    const res = await fetchJSON<MovieDetail>(`${API.peliculas}/movies/${id}`);
+    // MS4 → GET /movies/{id}
+    const res = await fetchJSON<MovieDetail>(`${MS4}/movies/${id}`);
     if (res) setDetail(res);
   };
 
@@ -425,6 +485,9 @@ const PeliculasTab: FC = () => {
 
   return (
     <div className="space-y-4">
+      {movieStats?.total != null && (
+        <div className="text-xs text-slate-500">Total en catálogo: <span className="text-slate-300 font-medium">{movieStats.total}</span></div>
+      )}
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"><Icon path={Icons.search} size={14} /></span>
@@ -531,19 +594,20 @@ const PeliculasTab: FC = () => {
 
 // ─── FORO TAB ─────────────────────────────────────────────────────────────────
 const ForoTab: FC = () => {
-  const [threads, setThreads]   = useState<ForumThread[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [modal, setModal]       = useState<"thread" | null>(null);
-  const [selected, setSelected] = useState<ForumThread | null>(null);
-  const [posts, setPosts]       = useState<Post[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [form, setForm]         = useState({ title: "", body: "", userId: "", movieId: "" });
-  const [msgForm, setMsgForm]   = useState({ text: "", userId: "" });
-  const [postForm, setPostForm] = useState({ body: "", userId: "" });
+  const [threads, setThreads]     = useState<ForumThread[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [modal, setModal]         = useState<"thread" | null>(null);
+  const [selected, setSelected]   = useState<ForumThread | null>(null);
+  const [posts, setPosts]         = useState<Post[]>([]);
+  const [messages, setMessages]   = useState<Message[]>([]);
+  const [form, setForm]           = useState({ title: "", body: "", userId: "", movieId: "" });
+  const [msgForm, setMsgForm]     = useState({ text: "", userId: "" });
+  const [postForm, setPostForm]   = useState({ body: "", userId: "" });
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetchJSON<ForumThread[]>(`${API.foro}/api/threads`);
+    // MS4 → redirige a MS3 internamente
+    const res = await fetchJSON<ForumThread[]>(`${MS4}/foro/threads`);
     setThreads(res || []);
     setLoading(false);
   }, []);
@@ -553,15 +617,15 @@ const ForoTab: FC = () => {
   const openThread = async (thread: ForumThread) => {
     setSelected(thread);
     const [p, m] = await Promise.all([
-      fetchJSON<Post[]>(`${API.foro}/api/posts/thread/${thread.id}`),
-      fetchJSON<Message[]>(`${API.foro}/api/messages/thread/${thread.id}`),
+      fetchJSON<Post[]>(`${MS4}/foro/posts/thread/${thread.id}`),
+      fetchJSON<Message[]>(`${MS4}/foro/messages/thread/${thread.id}`),
     ]);
     setPosts(p || []);
     setMessages(m || []);
   };
 
   const createThread = async () => {
-    await fetchJSON(`${API.foro}/api/threads`, {
+    await fetchJSON(`${MS4}/foro/threads`, {
       method: "POST",
       body: JSON.stringify({
         title: form.title,
@@ -576,14 +640,14 @@ const ForoTab: FC = () => {
   };
 
   const deleteThread = async (id: string) => {
-    await fetchJSON(`${API.foro}/api/threads/${id}`, { method: "DELETE" });
+    await fetchJSON(`${MS4}/foro/threads/${id}`, { method: "DELETE" });
     if (selected?.id === id) setSelected(null);
     load();
   };
 
   const sendMessage = async () => {
     if (!selected) return;
-    await fetchJSON(`${API.foro}/api/messages`, {
+    await fetchJSON(`${MS4}/foro/messages`, {
       method: "POST",
       body: JSON.stringify({ threadId: selected.id, userId: msgForm.userId, text: msgForm.text }),
     });
@@ -593,7 +657,7 @@ const ForoTab: FC = () => {
 
   const createPost = async () => {
     if (!selected) return;
-    await fetchJSON(`${API.foro}/api/posts`, {
+    await fetchJSON(`${MS4}/foro/posts`, {
       method: "POST",
       body: JSON.stringify({ threadId: selected.id, userId: postForm.userId, body: postForm.body }),
     });
@@ -610,7 +674,6 @@ const ForoTab: FC = () => {
       </div>
 
       <div className={`grid gap-4 ${selected ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
-        {/* Lista threads */}
         <div className="space-y-2">
           {loading ? <Spinner /> : threads.length === 0 ? <EmptyState message="No hay threads" /> :
             threads.map(t => (
@@ -635,7 +698,6 @@ const ForoTab: FC = () => {
           }
         </div>
 
-        {/* Detalle thread */}
         {selected && (
           <Card className="p-4 space-y-4">
             <div className="flex items-center justify-between">
@@ -643,7 +705,6 @@ const ForoTab: FC = () => {
               <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-white text-lg leading-none">×</button>
             </div>
 
-            {/* Posts */}
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider mb-2 font-semibold">Posts ({posts.length})</p>
               <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -669,7 +730,6 @@ const ForoTab: FC = () => {
               </div>
             </div>
 
-            {/* Messages */}
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wider mb-2 font-semibold">Mensajes ({messages.length})</p>
               <div className="space-y-2 max-h-40 overflow-y-auto">
@@ -731,9 +791,9 @@ const OverviewTab: FC<{ auth: Auth }> = ({ auth }) => {
   useEffect(() => {
     const load = async () => {
       const [u, p, t] = await Promise.all([
-        fetchJSON<Usuario[]>(`${API.usuarios}/usuarios`, { headers: authHeader(auth.email, auth.password) }),
-        fetchJSON<MoviesResponse>(`${API.peliculas}/movies?limit=1`),
-        fetchJSON<ForumThread[]>(`${API.foro}/api/threads`),
+        fetchJSON<Usuario[]>(`${MS4}/usuarios`, { headers: authHeader(auth.email, auth.password) }),
+        fetchJSON<MoviesResponse>(`${MS4}/movies?limit=1`),
+        fetchJSON<ForumThread[]>(`${MS4}/foro/threads`),
       ]);
       setStats({ usuarios: u?.length ?? 0, peliculas: p?.total ?? 0, threads: t?.length ?? 0 });
     };
@@ -748,17 +808,18 @@ const OverviewTab: FC<{ auth: Auth }> = ({ auth }) => {
         <StatCard icon={Icons.thread} label="Threads"   value={stats.threads}   color="purple" />
       </div>
       <Card className="p-5">
-        <h3 className="text-white font-semibold mb-3">Servicios activos</h3>
+        <h3 className="text-white font-semibold mb-1">Orquestador activo</h3>
+        <p className="text-slate-500 text-xs mb-4">Todo el tráfico pasa por el MS4 en el puerto 8004</p>
         <div className="space-y-2">
           {[
-            { name: "API Usuarios (Python / FastAPI)", port: "8000", color: "green" as BadgeColor },
-            { name: "API Películas (Node / Fastify)",  port: "3000", color: "blue"  as BadgeColor },
-            { name: "API Foro (Java / Spring Boot)",   port: "8080", color: "purple" as BadgeColor },
+            { name: "MS4 Orquestador → MS1 Usuarios (Python)",    port: "8004 → 8000", color: "green"  as BadgeColor },
+            { name: "MS4 Orquestador → MS2 Películas (Node)",     port: "8004 → 3000", color: "blue"   as BadgeColor },
+            { name: "MS4 Orquestador → MS3 Foro (Spring Boot)",   port: "8004 → 8080", color: "purple" as BadgeColor },
           ].map(s => (
             <div key={s.port} className="flex items-center justify-between py-2 border-b border-slate-700/40 last:border-0">
               <span className="text-slate-300 text-sm">{s.name}</span>
               <div className="flex items-center gap-2">
-                <span className="text-slate-500 text-xs font-mono">:{s.port}</span>
+                <span className="text-slate-500 text-xs font-mono">{s.port}</span>
                 <Badge color={s.color}>activo</Badge>
               </div>
             </div>
@@ -788,7 +849,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      {/* Sidebar */}
       <div className="fixed inset-y-0 left-0 w-56 bg-slate-800/80 border-r border-slate-700/50 backdrop-blur-sm flex flex-col z-10">
         <div className="p-5 border-b border-slate-700/50">
           <div className="flex items-center gap-3">
@@ -797,6 +857,7 @@ export default function App() {
             </div>
             <span className="text-white font-bold">CineCloud</span>
           </div>
+          <p className="text-slate-500 text-xs mt-2">vía MS4 :8004</p>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {TABS.map(t => (
@@ -818,7 +879,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Main */}
       <div className="ml-56 p-6">
         <div className="mb-6">
           <h2 className="text-xl font-bold text-white">{TABS.find(t => t.id === tab)?.label}</h2>
