@@ -68,9 +68,10 @@ interface MoviesResponse {
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const API = {
-  usuarios: "http://localhost:8000",
-  peliculas: "http://localhost:3000/api",
-  foro: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8080", // DNS del balanceador
+  usuarios: "http://localhost:8000",    // solo para login/registro
+  peliculas: "http://localhost:3000/api", // solo para catálogo directo
+  foro: "http://balanceadormvs-191264992.us-east-1.elb.amazonaws.com:8080",
+  orquestador: "http://localhost:8004",  // ← MS4
 } as const;
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -385,6 +386,7 @@ const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
   const [usuario, setUsuario]     = useState<Usuario | null>(null);
   const [reviewForm, setReviewForm] = useState({ author: "", rating: "", comment: "" });
   const [reviewLoading, setReviewLoading] = useState(false);
+  const [vistas, setVistas]       = useState<number[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -405,18 +407,38 @@ const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
     loadUser();
   }, [auth]);
 
+  useEffect(() => {
+    const loadVistas = async () => {
+      if (!usuario) return;
+      const res = await fetchJSON<any[]>(`${API.usuarios}/usuarios/${usuario.id}/peliculas_vistas`, {
+        headers: authHeader(auth.email, auth.password),
+      });
+      if (res) setVistas(res.map(v => v.pelicula_id));
+    };
+    loadVistas();
+  }, [usuario]);
+
   const openDetail = async (id: number) => {
     const res = await fetchJSON<MovieDetail>(`${API.peliculas}/movies/${id}`);
     if (res) setDetail(res);
   };
 
-  const marcarVista = async (e: React.MouseEvent, movieId: number) => {
+  const toggleVista = async (e: React.MouseEvent, movieId: number) => {
     e.stopPropagation();
     if (!usuario) return;
-    await fetchJSON(`${API.usuarios}/interno/usuarios/${usuario.id}/vista/${movieId}`, {
-      method: "POST",
-      headers: authHeader(auth.email, auth.password),
-    });
+
+    if (vistas.includes(movieId)) {
+      await fetchJSON(`${API.usuarios}/interno/usuarios/${usuario.id}/vista/${movieId}`, {
+        method: "DELETE",
+      });
+      setVistas(vistas.filter(id => id !== movieId));
+    } else {
+      await fetchJSON(`${API.usuarios}/interno/usuarios/${usuario.id}/vista/${movieId}`, {
+        method: "POST",
+        headers: authHeader(auth.email, auth.password),
+      });
+      setVistas([...vistas, movieId]);
+    }
   };
 
   const addReview = async () => {
@@ -465,9 +487,13 @@ const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
                   <p className="text-white font-semibold truncate">{m.title}</p>
                   <p className="text-slate-400 text-xs mt-0.5">{m.year}{m.duration ? ` · ${m.duration} min` : ""}</p>
                 </div>
-                <Btn size="sm" variant="ghost" onClick={(e) => marcarVista(e, m.id)}>
-                  <Icon path={Icons.star} size={12} /> Vista
-                </Btn>
+                <button
+                  onClick={(e) => toggleVista(e, m.id)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all ${vistas.includes(m.id) ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25" : "bg-slate-700/50 text-slate-300 border border-slate-600/50 hover:bg-slate-700"}`}
+                >
+                  <Icon path={Icons.eye} size={11} />
+                  {vistas.includes(m.id) ? "Visto ✓" : "Marcar"}
+                </button>
               </div>
               {m.synopsis && <p className="text-slate-400 text-xs mt-2 line-clamp-2">{m.synopsis}</p>}
             </Card>
@@ -481,9 +507,13 @@ const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-white text-2xl font-bold">{detail.title}</h2>
               <div className="flex items-center gap-3">
-                <Btn variant="ghost" size="sm" onClick={(e) => marcarVista(e, detail.id)}>
-                  <Icon path={Icons.star} size={12} /> Marcar como vista
-                </Btn>
+                <button
+                  onClick={(e) => toggleVista(e, detail.id)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${vistas.includes(detail.id) ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25" : "bg-slate-700/50 text-slate-300 border border-slate-600/50 hover:bg-slate-700"}`}
+                >
+                  <Icon path={Icons.eye} size={12} />
+                  {vistas.includes(detail.id) ? "Visto ✓" : "Marcar como vista"}
+                </button>
                 <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
               </div>
             </div>
@@ -521,7 +551,6 @@ const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
                   </Card>
                 )}
               </div>
-
               <Card className="p-5">
                 <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">
                   Reseñas ({detail.reviews?.length ?? 0})
@@ -566,12 +595,7 @@ const PeliculasTab: FC<{ auth: Auth }> = ({ auth }) => {
                     onChange={e => setReviewForm(f => ({ ...f, comment: e.target.value }))}
                     className="w-full bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/70"
                   />
-                  <Btn
-                    variant="primary"
-                    size="sm"
-                    onClick={addReview}
-                    disabled={!reviewForm.author || !reviewForm.rating || reviewLoading}
-                  >
+                  <Btn variant="primary" size="sm" onClick={addReview} disabled={!reviewForm.author || !reviewForm.rating || reviewLoading}>
                     {reviewLoading ? "Enviando..." : "Publicar reseña"}
                   </Btn>
                 </div>
@@ -778,30 +802,31 @@ const ForoTab: FC = () => {
 };
 
 const PerfilTab: FC<{ auth: Auth }> = ({ auth }) => {
-  const [usuario, setUsuario] = useState<Usuario | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [form, setForm]       = useState({ nombre: "", pais: "" });
-  const [success, setSuccess] = useState(false);
+  const [usuario, setUsuario]     = useState<Usuario | null>(null);
+  const [loading, setLoading]     = useState(true);
+  const [editing, setEditing]     = useState(false);
+  const [form, setForm]           = useState({ nombre: "", pais: "" });
+  const [success, setSuccess]     = useState(false);
   const [peliculas, setPeliculas] = useState<any[]>([]);
+  const [detail, setDetail]       = useState<MovieDetail | null>(null);
+  const [showAllVistas, setShowAllVistas] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
-      const res = await fetchJSON<Usuario>(`${API.usuarios}/auth/me`, {
+  const loadData = async () => {
+    const res = await fetchJSON<Usuario>(`${API.usuarios}/auth/me`, {
+      headers: authHeader(auth.email, auth.password),
+    });
+    if (res) {
+      setUsuario(res);
+      setForm({ nombre: res.nombre, pais: res.pais });
+      const vistas = await fetchJSON<any[]>(`${API.usuarios}/usuarios/${res.id}/peliculas_vistas`, {
         headers: authHeader(auth.email, auth.password),
       });
-      if (res) {
-        setUsuario(res);
-        setForm({ nombre: res.nombre, pais: res.pais });
-        const vistas = await fetchJSON<any[]>(`${API.usuarios}/usuarios/${res.id}/peliculas_vistas`, {
-          headers: authHeader(auth.email, auth.password),
-        });
-        setPeliculas(vistas || []);
-      }
-      setLoading(false);
-    };
-    load();
-  }, [auth]);
+      setPeliculas(vistas || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadData(); }, [auth]);
 
   const update = async () => {
     if (!usuario) return;
@@ -814,6 +839,20 @@ const PerfilTab: FC<{ auth: Auth }> = ({ auth }) => {
     setEditing(false);
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
+  };
+
+  const openDetail = async (peliculaId: number) => {
+    const res = await fetchJSON<MovieDetail>(`${API.peliculas}/movies/${peliculaId}`);
+    if (res) setDetail(res);
+  };
+
+  const quitarVista = async (e: React.MouseEvent, peliculaId: number) => {
+    e.stopPropagation();
+    if (!usuario) return;
+    await fetchJSON(`${API.usuarios}/interno/usuarios/${usuario.id}/vista/${peliculaId}`, {
+      method: "DELETE",
+    });
+    setPeliculas(prev => prev.filter(p => p.pelicula_id !== peliculaId));
   };
 
   if (loading) return <Spinner />;
@@ -846,10 +885,10 @@ const PerfilTab: FC<{ auth: Auth }> = ({ auth }) => {
         </div>
         <div className="grid grid-cols-2 gap-0">
           {[
-            { label: "Nombre",    value: usuario.nombre },
-            { label: "País",      value: usuario.pais },
-            { label: "Email",     value: usuario.email },
-            { label: "Registro",  value: usuario.fecha_registro ? new Date(usuario.fecha_registro).toLocaleDateString("es") : "—" },
+            { label: "Nombre",   value: usuario.nombre },
+            { label: "País",     value: usuario.pais },
+            { label: "Email",    value: usuario.email },
+            { label: "Registro", value: usuario.fecha_registro ? new Date(usuario.fecha_registro).toLocaleDateString("es") : "—" },
           ].map((row, i) => (
             <div key={row.label} className={`py-3 ${i % 2 === 0 ? "pr-6 border-r border-slate-700/40" : "pl-6"} ${i < 2 ? "border-b border-slate-700/40" : ""}`}>
               <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">{row.label}</p>
@@ -862,25 +901,154 @@ const PerfilTab: FC<{ auth: Auth }> = ({ auth }) => {
 
       {/* Películas vistas */}
       <Card className="p-6">
-        <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-4">Películas vistas ({peliculas.length})</p>
+        {/* Header clickeable para ver todas */}
+        <div
+          className="flex items-center justify-between cursor-pointer group mb-4"
+          onClick={() => setShowAllVistas(true)}
+        >
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold group-hover:text-slate-300 transition-colors">
+            Películas vistas ({peliculas.length})
+          </p>
+          <span className="text-xs text-blue-400 group-hover:text-blue-300 transition-colors">Ver todas →</span>
+        </div>
+
         {peliculas.length === 0 ? (
           <EmptyState message="No hay películas marcadas como vistas" />
         ) : (
           <div className="space-y-1">
-            {peliculas.map((p, i) => (
-              <div key={i} className="flex items-center gap-3 py-2 border-b border-slate-700/30 last:border-0">
+            {peliculas.slice(0, 5).map((p, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-3 py-2 border-b border-slate-700/30 last:border-0 cursor-pointer hover:bg-slate-700/20 rounded-lg px-2 transition-colors group"
+                onClick={() => openDetail(p.pelicula_id)}
+              >
                 <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center text-slate-400 shrink-0">
                   <Icon path={Icons.film} size={14} />
                 </div>
-                <div>
+                <div className="flex-1">
                   <p className="text-white text-sm">Película #{p.pelicula_id}</p>
                   {p.fecha_vista && <p className="text-slate-400 text-xs">{new Date(p.fecha_vista).toLocaleDateString("es")}</p>}
                 </div>
+                {/* Botón quitar vista — verde estilo completado */}
+                <button
+                  onClick={(e) => quitarVista(e, p.pelicula_id)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25"
+                >
+                  <Icon path={Icons.eye} size={11} /> Visto ✓
+                </button>
               </div>
             ))}
+            {peliculas.length > 5 && (
+              <p
+                className="text-xs text-blue-400 text-center pt-2 cursor-pointer hover:text-blue-300"
+                onClick={() => setShowAllVistas(true)}
+              >
+                Ver {peliculas.length - 5} más...
+              </p>
+            )}
           </div>
         )}
       </Card>
+
+      {/* Modal todas las películas vistas */}
+      {showAllVistas && (
+        <div className="fixed inset-0 z-50 bg-slate-900/95 backdrop-blur-sm overflow-y-auto p-6">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-white text-2xl font-bold">Películas vistas ({peliculas.length})</h2>
+              <button onClick={() => setShowAllVistas(false)} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+            </div>
+            <div className="space-y-2">
+              {peliculas.map((p, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 py-3 px-4 border border-slate-700/30 rounded-xl cursor-pointer hover:bg-slate-700/20 transition-colors group"
+                  onClick={() => { openDetail(p.pelicula_id); setShowAllVistas(false); }}
+                >
+                  <div className="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center text-slate-400 shrink-0">
+                    <Icon path={Icons.film} size={16} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-white text-sm font-medium">Película #{p.pelicula_id}</p>
+                    {p.fecha_vista && <p className="text-slate-400 text-xs">{new Date(p.fecha_vista).toLocaleDateString("es")}</p>}
+                  </div>
+                  <button
+                    onClick={(e) => { quitarVista(e, p.pelicula_id); }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25"
+                  >
+                    <Icon path={Icons.eye} size={11} /> Visto ✓
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detalle película */}
+      {detail && (
+        <div className="fixed inset-0 z-50 bg-slate-900/95 backdrop-blur-sm overflow-y-auto p-6">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-white text-2xl font-bold">{detail.title}</h2>
+              <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+            </div>
+            <div className="space-y-6">
+              <div className="flex gap-4 flex-wrap">
+                <Badge color="slate">{detail.year}</Badge>
+                {detail.duration && <Badge color="slate">{detail.duration} min</Badge>}
+                {detail.genres?.map(g => <Badge key={g.id} color="blue">{g.name}</Badge>)}
+              </div>
+              {detail.synopsis && (
+                <Card className="p-5">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Sinopsis</p>
+                  <p className="text-slate-300 text-sm leading-relaxed">{detail.synopsis}</p>
+                </Card>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(detail.directors?.length ?? 0) > 0 && (
+                  <Card className="p-5">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">Directores</p>
+                    <div className="space-y-1">
+                      {detail.directors!.map(d => (
+                        <p key={d.id} className="text-slate-300 text-sm">{d.name}</p>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+                {(detail.actors?.length ?? 0) > 0 && (
+                  <Card className="p-5">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">Actores</p>
+                    <div className="flex flex-wrap gap-1">
+                      {detail.actors!.map(a => (
+                        <span key={a.id} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{a.name}</span>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+              </div>
+              {(detail.reviews?.length ?? 0) > 0 && (
+                <Card className="p-5">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-3">
+                    Reseñas ({detail.reviews?.length ?? 0})
+                  </p>
+                  <div className="space-y-3">
+                    {detail.reviews?.map(r => (
+                      <div key={r.id} className="border-b border-slate-700/40 last:border-0 pb-3 last:pb-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-white text-sm font-medium">{r.author}</span>
+                          <span className="text-yellow-400 text-sm">★ {r.rating}/10</span>
+                        </div>
+                        {r.comment && <p className="text-slate-400 text-sm">{r.comment}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal editar */}
       {editing && (
